@@ -464,6 +464,30 @@ tr:hover td{background:var(--surface2)}
 </head>
 <body>
 
+<!-- PASSWORD SCREEN -->
+<div id="lock-screen" style="
+  position:fixed;inset:0;background:var(--bg);z-index:9999;
+  display:flex;align-items:center;justify-content:center;
+">
+  <div style="
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);box-shadow:var(--shadow-md);
+    padding:40px 48px;width:320px;text-align:center;
+  ">
+    <div style="font-size:36px;margin-bottom:16px">🔐</div>
+    <div style="font-family:var(--font-display);font-size:18px;font-weight:700;margin-bottom:6px">Invoice Register</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:24px">Inserisci la password per accedere</div>
+    <input type="password" id="lock-input" placeholder="Password"
+      style="width:100%;margin-bottom:12px;text-align:center;font-size:15px;padding:11px 14px;letter-spacing:2px"
+      onkeydown="if(event.key==='Enter')checkPassword()"
+      autofocus>
+    <div id="lock-error" style="display:none;color:var(--red);font-size:11.5px;margin-bottom:10px">Password errata</div>
+    <button class="btn btn-primary" style="width:100%;font-size:14px;padding:11px" onclick="checkPassword()">Accedi</button>
+  </div>
+</div>
+
+<div id="app-content" style="display:none">
+
 <header>
   <h1>Invoice Register</h1>
   <span>AI-powered · XLSX export identico al tuo file</span>
@@ -1327,6 +1351,36 @@ function maltaTax(c){
 updateAmountSections();
 load();
 document.addEventListener('keydown',function(e){if(e.key==='Escape')closeEditModal();});
+
+// ── PASSWORD ──
+(function(){
+  var HASH='c2ab9b5e7b3b5e9e7a8c1b2d4f6e8a0c3d5f7b9e1a3c5d7f9b1e3a5c7d9f1b3';
+  function sha256simple(s){
+    // simple check via stored hash comparison using btoa as lightweight obfuscation
+    return btoa(s);
+  }
+  var CORRECT=btoa('Gllglc83!');
+  var unlocked=sessionStorage.getItem('inv_unlocked');
+  if(unlocked===CORRECT){
+    document.getElementById('lock-screen').style.display='none';
+    document.getElementById('app-content').style.display='';
+  }
+  window.checkPassword=function(){
+    var val=document.getElementById('lock-input').value;
+    if(btoa(val)===CORRECT){
+      sessionStorage.setItem('inv_unlocked',CORRECT);
+      document.getElementById('lock-screen').style.display='none';
+      document.getElementById('app-content').style.display='';
+      document.getElementById('lock-input').value='';
+    } else {
+      document.getElementById('lock-error').style.display='';
+      document.getElementById('lock-input').value='';
+      document.getElementById('lock-input').focus();
+      setTimeout(function(){document.getElementById('lock-error').style.display='none';},3000);
+    }
+  };
+})();
 </script>
+</div><!-- /app-content -->
 </body>
 </html>
