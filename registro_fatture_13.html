@@ -6,6 +6,7 @@
 <title>Invoice Register</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Syne:wght@600;700;800&display=swap');
@@ -619,6 +620,16 @@ tr:hover td{background:var(--surface2)}
     <div style="flex:1"></div>
     <button class="btn btn-export" onclick="exportXLSX()">Esporta XLSX</button>
     <button class="btn btn-orange" onclick="exportCSV()">CSV</button>
+    <div style="display:flex;align-items:center;gap:6px;margin-left:4px">
+      <select id="zip-quarter" style="font-size:12px;padding:7px 10px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-family:var(--font);cursor:pointer">
+        <option value="all">Anno intero</option>
+        <option value="Q1">Q1 — Gen/Feb/Mar</option>
+        <option value="Q2">Q2 — Apr/Mag/Giu</option>
+        <option value="Q3">Q3 — Lug/Ago/Set</option>
+        <option value="Q4">Q4 — Ott/Nov/Dic</option>
+      </select>
+      <button class="btn btn-orange" onclick="exportZIP()" style="white-space:nowrap">📦 ZIP Commercialista</button>
+    </div>
   </div>
   <div class="table-wrap">
     <table>
@@ -1059,6 +1070,20 @@ function saveTransaction(){
   save(); updateCount();
   showMsg('Transazione salvata!','success');
 
+  // ── Store file locally for ZIP export ──
+  if(driveCurrentFile){
+    var fileToStore=driveCurrentFile;
+    toB64(fileToStore).then(function(b64){
+      try{
+        localStorage.setItem('inv_file_'+t.id, JSON.stringify({
+          name:fileToStore.name,
+          type:fileToStore.type||'application/octet-stream',
+          b64:b64
+        }));
+      }catch(e){console.warn('File storage failed (localStorage full?):',e);}
+    });
+  }
+
   // ── Google Drive upload ──
   if(driveCurrentFile && driveIsReady()){
     var inv=(t.invoice||'fattura').replace(/[\/\\:*?"<>|]/g,'-');
@@ -1085,7 +1110,90 @@ function saveTransaction(){
 function delTx(id){
   if(!confirm('Eliminare?')) return;
   txs=txs.filter(function(t){return t.id!==id;});
+  try{localStorage.removeItem('inv_file_'+id);}catch(e){}
   save(); renderTable(); renderStats('stats-a'); updateCount();
+}
+
+function exportZIP(){
+  if(!txs.length){alert('Nessuna transazione.');return;}
+  var quarter=document.getElementById('zip-quarter').value;
+  var year=new Date().getFullYear();
+
+  // Filter transactions by quarter
+  var quarterMonths={
+    'Q1':['01','02','03'],'Q2':['04','05','06'],
+    'Q3':['07','08','09'],'Q4':['10','11','12']
+  };
+  var filtered=txs.filter(function(t){
+    if(quarter==='all') return true;
+    var m=t.date.slice(5,7);
+    return quarterMonths[quarter].indexOf(m)>=0;
+  });
+
+  if(!filtered.length){alert('Nessuna fattura nel periodo selezionato.');return;}
+
+  var label=quarter==='all'?year+'_completo':year+'_'+quarter;
+  var zip=new JSZip();
+  var folder=zip.folder('Fatture_'+label);
+
+  // Add XLSX register
+  var wb=XLSX.utils.book_new();
+  var rows=[['Data','Mese Servizio','Tipo','Fattura #','Controparte','Categoria','Paese','Net EUR','VAT EUR','Totale EUR','Note']];
+  filtered.forEach(function(t){
+    var net=t.type==='Issued'?t.entrateNet:t.usciteNet;
+    var vat=t.type==='Issued'?t.entrateVat:t.usciteVat;
+    var tot=t.type==='Issued'?t.entrateTotal:t.usciteTotal;
+    rows.push([t.date,t.serviceMonth,t.type,t.invoice,t.counterparty,t.category,t.country,net,vat,tot,t.notes]);
+  });
+  var ws=XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols']=[10,12,10,16,28,28,10,12,12,12,40].map(function(w){return{wch:w};});
+  XLSX.utils.book_append_sheet(wb,ws,'Registro');
+  var xlsxBytes=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+  folder.file('Registro_Fatture_'+label+'.xlsx', xlsxBytes);
+
+  // Add original files
+  var filePromises=[];
+  var missingFiles=[];
+  filtered.forEach(function(t){
+    var stored=localStorage.getItem('inv_file_'+t.id);
+    if(stored){
+      try{
+        var f=JSON.parse(stored);
+        var inv=(t.invoice||'fattura').replace(/[\/\\:*?"<>|]/g,'-');
+        var cp=t.counterparty.slice(0,25).replace(/[\/\\:*?"<>|]/g,'-');
+        var ext=f.name.split('.').pop();
+        var fname=t.date+'_'+inv+'_'+cp+'.'+ext;
+        // Convert base64 to binary
+        var binary=atob(f.b64);
+        var bytes=new Uint8Array(binary.length);
+        for(var i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+        folder.file(fname, bytes);
+      }catch(e){missingFiles.push(t.invoice||t.counterparty);}
+    } else {
+      missingFiles.push(t.invoice||t.counterparty);
+    }
+  });
+
+  // Add a summary text file listing missing files
+  if(missingFiles.length){
+    folder.file('_FILE_MANCANTI.txt',
+      'Le seguenti fatture non hanno il file originale allegato\n'+
+      '(inserite manualmente o caricate prima di questa versione):\n\n'+
+      missingFiles.join('\n')
+    );
+  }
+
+  // Generate and download ZIP
+  zip.generateAsync({type:'blob'}).then(function(blob){
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;
+    a.download='Fatture_'+label+'.zip';
+    a.click();
+    URL.revokeObjectURL(url);
+    showMsg('ZIP generato: '+filtered.length+' fatture'+
+      (missingFiles.length?' ('+missingFiles.length+' senza file originale)':''),'success');
+  });
 }
 
 function editTx(id){
@@ -1200,7 +1308,7 @@ function renderTable(){
       '<td class="'+(t.usciteVat?'amount-out':'')+'">'+fmtN(t.usciteVat)+'</td>'+
       '<td class="'+(t.usciteTotal?'amount-out':'')+'"><b>'+fmtN(t.usciteTotal)+'</b></td>'+
       '<td style="color:var(--text2);font-size:10.5px;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.notes)+'</td>'+
-      '<td><button class="btn btn-edit" onclick="editTx('+t.id+')" title="Modifica">✏</button><button class="btn btn-danger" onclick="delTx('+t.id+')">✕</button></td>'+
+      '<td style="white-space:nowrap"><span title="File allegato" style="color:var(--text3);font-size:12px;margin-right:4px">'+(localStorage.getItem('inv_file_'+t.id)?'📎':'')+'</span><button class="btn btn-edit" onclick="editTx('+t.id+')" title="Modifica">✏</button><button class="btn btn-danger" onclick="delTx('+t.id+')">✕</button></td>'+
       '</tr>';
   }).join('');
 }
