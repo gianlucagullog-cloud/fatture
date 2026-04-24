@@ -613,10 +613,46 @@ tr:hover td{background:var(--surface2)}
 <!-- REGISTRO -->
 <div id="tab-registro" style="display:none">
   <div class="stats" id="stats-a"></div>
-  <div class="filters">
-    <button class="filter-btn active" onclick="setFilter('all',this)">Tutti</button>
-    <button class="filter-btn" onclick="setFilter('Issued',this)">Issued</button>
-    <button class="filter-btn" onclick="setFilter('Received',this)">Received</button>
+  <div class="filters" style="flex-wrap:wrap;gap:10px;row-gap:8px">
+    <div style="display:flex;gap:4px;align-items:center">
+      <button class="filter-btn active" id="ftype-all" onclick="setTypeFilter('all',this)">Tutti</button>
+      <button class="filter-btn" id="ftype-issued" onclick="setTypeFilter('Issued',this)">Issued</button>
+      <button class="filter-btn" id="ftype-received" onclick="setTypeFilter('Received',this)">Received</button>
+    </div>
+    <div style="width:1px;height:24px;background:var(--border);flex-shrink:0"></div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="font-size:10.5px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Riferimento</span>
+      <div style="display:flex;background:var(--surface2);border:1.5px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">
+        <button id="ref-date-btn" class="filter-btn active" style="border-radius:0;border:none;padding:5px 12px;font-size:11px" onclick="setDateRef('date',this)">Data fattura</button>
+        <button id="ref-svc-btn" class="filter-btn" style="border-radius:0;border:none;border-left:1.5px solid var(--border);padding:5px 12px;font-size:11px" onclick="setDateRef('serviceMonth',this)">Service month</button>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="font-size:10.5px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Periodo</span>
+      <select id="period-filter" onchange="renderTable()" style="font-size:12px;padding:6px 10px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-family:var(--font);cursor:pointer">
+        <option value="all">Tutto</option>
+        <optgroup label="Trimestri">
+          <option value="Q1">Q1 — Gen / Feb / Mar</option>
+          <option value="Q2">Q2 — Apr / Mag / Giu</option>
+          <option value="Q3">Q3 — Lug / Ago / Set</option>
+          <option value="Q4">Q4 — Ott / Nov / Dic</option>
+        </optgroup>
+        <optgroup label="Mesi">
+          <option value="01">Gennaio</option>
+          <option value="02">Febbraio</option>
+          <option value="03">Marzo</option>
+          <option value="04">Aprile</option>
+          <option value="05">Maggio</option>
+          <option value="06">Giugno</option>
+          <option value="07">Luglio</option>
+          <option value="08">Agosto</option>
+          <option value="09">Settembre</option>
+          <option value="10">Ottobre</option>
+          <option value="11">Novembre</option>
+          <option value="12">Dicembre</option>
+        </optgroup>
+      </select>
+    </div>
     <div style="flex:1"></div>
     <button class="btn btn-export" onclick="exportXLSX()">Esporta XLSX</button>
     <button class="btn btn-orange" onclick="exportCSV()">CSV</button>
@@ -839,7 +875,7 @@ tr:hover td{background:var(--surface2)}
 </div>
 
 <script>
-var txs=[], filter='all';
+var txs=[], filter='all', dateRef='date';
 var editingId=null;
 
 // ── GOOGLE DRIVE ──
@@ -1277,18 +1313,47 @@ function showMsg(txt,type){
   document.getElementById('msg-area').innerHTML='<div class="msg msg-'+type+'">'+txt+'</div>';
   setTimeout(function(){var el=document.getElementById('msg-area');if(el)el.innerHTML='';},5000);
 }
-function setFilter(f,btn){
+function setTypeFilter(f,btn){
   filter=f;
-  document.querySelectorAll('.filter-btn').forEach(function(b){b.classList.remove('active');});
-  btn.classList.add('active');
+  var btns=['ftype-all','ftype-issued','ftype-received'];
+  btns.forEach(function(id){var el=document.getElementById(id);if(el)el.classList.remove('active');});
+  if(btn)btn.classList.add('active');
+  renderTable();
+}
+function setFilter(f,btn){setTypeFilter(f,btn);}
+
+function setDateRef(ref,btn){
+  dateRef=ref;
+  var db=document.getElementById('ref-date-btn');
+  var sb=document.getElementById('ref-svc-btn');
+  if(db)db.classList.toggle('active',ref==='date');
+  if(sb)sb.classList.toggle('active',ref==='serviceMonth');
   renderTable();
 }
 
+function getRefDate(t){
+  return dateRef==='serviceMonth'?(t.serviceMonth||t.date):t.date;
+}
+
+function matchesPeriod(t,period){
+  if(period==='all') return true;
+  var d=getRefDate(t);
+  var m=d.slice(5,7);
+  var qMap={Q1:['01','02','03'],Q2:['04','05','06'],Q3:['07','08','09'],Q4:['10','11','12']};
+  if(qMap[period]) return qMap[period].indexOf(m)>=0;
+  return m===period;
+}
+
 function renderTable(){
-  var arr=filter==='all'?txs:txs.filter(function(t){return t.type===filter;});
+  var pf=document.getElementById('period-filter');
+  var period=pf?pf.value:'all';
+  var arr=txs.filter(function(t){
+    return (filter==='all'||t.type===filter) && matchesPeriod(t,period);
+  });
   var tbody=document.getElementById('tbody');
   var empty=document.getElementById('empty');
   if(!tbody) return;
+  renderFilteredStats(arr);
   if(!arr.length){tbody.innerHTML='';empty.style.display='';return;}
   empty.style.display='none';
   tbody.innerHTML=arr.map(function(t){
@@ -1311,6 +1376,19 @@ function renderTable(){
       '<td style="white-space:nowrap"><span title="File allegato" style="color:var(--text3);font-size:12px;margin-right:4px">'+(localStorage.getItem('inv_file_'+t.id)?'📎':'')+'</span><button class="btn btn-edit" onclick="editTx('+t.id+')" title="Modifica">✏</button><button class="btn btn-danger" onclick="delTx('+t.id+')">✕</button></td>'+
       '</tr>';
   }).join('');
+}
+
+function renderFilteredStats(arr){
+  var el=document.getElementById('stats-a');if(!el)return;
+  var tIn=arr.reduce(function(s,t){return s+(t.entrateTotal||0);},0);
+  var tOut=arr.reduce(function(s,t){return s+(t.usciteTotal||0);},0);
+  var nIn=arr.reduce(function(s,t){return s+(t.entrateNet||0);},0);
+  var nOut=arr.reduce(function(s,t){return s+(t.usciteNet||0);},0);
+  el.innerHTML=
+    stat('Entrate Totali',fmt(tIn),'var(--green)')+
+    stat('Uscite Totali',fmt(tOut),'var(--red)')+
+    stat('Saldo Netto',fmt(nIn-nOut),nIn>=nOut?'var(--green)':'var(--red)')+
+    stat('N Fatture',arr.length,'var(--accent)');
 }
 
 function renderStats(id){
